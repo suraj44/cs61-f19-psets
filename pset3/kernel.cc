@@ -184,19 +184,25 @@ void process_setup(pid_t pid, const char* program_name) {
     // load the program
     program_loader loader(program_name);
 
+    // Really important 
+    // Enabled the CR3 register
+    /* CR3 enables the processor to translate linear addresses into physical addresses 
+        by locating the page directory and page tables for the current task. */
+    set_pagetable(new_pagetable);
+
     // allocate and map all memory
     for (loader.reset(); loader.present(); ++loader) {
         for (uintptr_t a = round_down(loader.va(), PAGESIZE);
              a < loader.va() + loader.size();
              a += PAGESIZE) {
-            assert(!pages[a / PAGESIZE].used());
-            pages[a / PAGESIZE].refcount = 1;
-            vmiter(new_pagetable, a).map(a, PTE_PWU);
+            void *new_page = (void*)kalloc(PAGESIZE);
+            vmiter(ptable[pid].pagetable, a).map(new_page, PTE_PWU);
         }
     }
 
     // copy instructions and data into place
-    for (loader.reset(); loader.present(); ++loader) {
+    for (loader.reset
+    (); loader.present(); ++loader) {
         memset((void*) loader.va(), 0, loader.size());
         memcpy((void*) loader.va(), loader.data(), loader.data_size());
     }
@@ -206,10 +212,9 @@ void process_setup(pid_t pid, const char* program_name) {
 
     // allocate stack
     uintptr_t stack_addr = PROC_START_ADDR + PROC_SIZE * pid - PAGESIZE;
-    assert(!pages[stack_addr / PAGESIZE].used());
-    pages[stack_addr / PAGESIZE].refcount = 1;
     ptable[pid].regs.reg_rsp = stack_addr + PAGESIZE;
-    vmiter(ptable[pid].pagetable, stack_addr).map(stack_addr, PTE_PWU);
+    void *new_page = (void*)kalloc(PAGESIZE);
+    vmiter(ptable[pid].pagetable, stack_addr).map(new_page, PTE_PWU);
 
     // mark process as runnable
     ptable[pid].state = P_RUNNABLE;
@@ -335,9 +340,7 @@ uintptr_t syscall(regstate* regs) {
         schedule();             // does not return
 
     case SYSCALL_PAGE_ALLOC:
-        if(current->regs.reg_rdi >= PROC_START_ADDR)
-            return syscall_page_alloc(current->regs.reg_rdi);
-        break;
+        return syscall_page_alloc(current->regs.reg_rdi);
 
     default:
         panic("Unexpected system call %ld!\n", regs->reg_rax);
@@ -354,10 +357,9 @@ uintptr_t syscall(regstate* regs) {
 //    in `u-lib.hh` (but in the handout code, it does not).
 
 int syscall_page_alloc(uintptr_t addr) {
-    assert(!pages[addr / PAGESIZE].used());
-    vmiter(current->pagetable, addr).map(addr, PTE_PWU);
-    pages[addr / PAGESIZE].refcount = 1;
-    memset((void*) addr, 0, PAGESIZE);
+    void* new_page = (void*)kalloc(PAGESIZE);
+    vmiter(current->pagetable, addr).map(new_page, PTE_PWU);
+    memset((void*) new_page, 0, PAGESIZE);
     return 0;
 }
 
