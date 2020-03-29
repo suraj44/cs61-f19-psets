@@ -69,7 +69,16 @@ void kernel(const char* command) {
          it.va() < MEMSIZE_PHYSICAL;
          it += PAGESIZE) {
         if (it.va() != 0) {
-            it.map(it.va(), PTE_P | PTE_W | PTE_U);
+            if(it.va() < PROC_START_ADDR - 1) {
+                if(it.va() != CONSOLE_ADDR) {
+                     it.map(it.va(), PTE_P | PTE_W);
+                } else {
+                    it.map(it.va(), PTE_PWU);
+                }
+                
+            } else {
+                it.map(it.va(), PTE_PWU);
+            }
         } else {
             // nullptr is inaccessible even to the kernel
             it.map(it.va(), 0);
@@ -151,7 +160,26 @@ void process_setup(pid_t pid, const char* program_name) {
     init_process(&ptable[pid], 0);
 
     // initialize process page table
-    ptable[pid].pagetable = kernel_pagetable;
+    //x86_64_pagetable* test = (x86_64_pagetable*) kalloc(PAGESIZE);
+    x86_64_pagetable* new_pagetable = (x86_64_pagetable*) kalloc(PAGESIZE); // kernel_pagetable; 
+
+    memset(new_pagetable, 0, PAGESIZE);
+    ptable[pid].pagetable = new_pagetable;
+
+
+    vmiter pit(ptable[pid].pagetable,0);
+    vmiter kit(kernel_pagetable,0);
+    // copy kernel region memory mappings from kernel page table
+    for (;
+         kit.va() < PROC_START_ADDR;
+         kit += PAGESIZE, pit+= PAGESIZE) {
+
+        if (kit.present()) {
+            pit.map(kit.va(), kit.perm());
+        }
+    }
+
+    
 
     // load the program
     program_loader loader(program_name);
@@ -163,6 +191,7 @@ void process_setup(pid_t pid, const char* program_name) {
              a += PAGESIZE) {
             assert(!pages[a / PAGESIZE].used());
             pages[a / PAGESIZE].refcount = 1;
+            vmiter(new_pagetable, a).map(a, PTE_PWU);
         }
     }
 
@@ -180,6 +209,7 @@ void process_setup(pid_t pid, const char* program_name) {
     assert(!pages[stack_addr / PAGESIZE].used());
     pages[stack_addr / PAGESIZE].refcount = 1;
     ptable[pid].regs.reg_rsp = stack_addr + PAGESIZE;
+    vmiter(ptable[pid].pagetable, stack_addr).map(stack_addr, PTE_PWU);
 
     // mark process as runnable
     ptable[pid].state = P_RUNNABLE;
@@ -205,8 +235,8 @@ void exception(regstate* regs) {
 
     // It can be useful to log events using `log_printf`.
     // Events logged this way are stored in the host's `log.txt` file.
-    /* log_printf("proc %d: exception %d at rip %p\n",
-                current->pid, regs->reg_intno, regs->reg_rip); */
+     log_printf("proc %d: exception %d at rip %p\n",
+                current->pid, regs->reg_intno, regs->reg_rip); 
 
     // Show the current cursor location and memory state
     // (unless this is a kernel fault).
@@ -305,7 +335,9 @@ uintptr_t syscall(regstate* regs) {
         schedule();             // does not return
 
     case SYSCALL_PAGE_ALLOC:
-        return syscall_page_alloc(current->regs.reg_rdi);
+        if(current->regs.reg_rdi >= PROC_START_ADDR)
+            return syscall_page_alloc(current->regs.reg_rdi);
+        break;
 
     default:
         panic("Unexpected system call %ld!\n", regs->reg_rax);
@@ -323,6 +355,7 @@ uintptr_t syscall(regstate* regs) {
 
 int syscall_page_alloc(uintptr_t addr) {
     assert(!pages[addr / PAGESIZE].used());
+    vmiter(current->pagetable, addr).map(addr, PTE_PWU);
     pages[addr / PAGESIZE].refcount = 1;
     memset((void*) addr, 0, PAGESIZE);
     return 0;
