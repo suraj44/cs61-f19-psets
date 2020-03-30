@@ -211,7 +211,7 @@ void process_setup(pid_t pid, const char* program_name) {
     ptable[pid].regs.reg_rip = loader.entry();
 
     // allocate stack
-    uintptr_t stack_addr = PROC_START_ADDR + PROC_SIZE * pid - PAGESIZE;
+    uintptr_t stack_addr =  MEMSIZE_VIRTUAL -PAGESIZE;//PROC_START_ADDR + PROC_SIZE * pid - PAGESIZE;
     ptable[pid].regs.reg_rsp = stack_addr + PAGESIZE;
     void *new_page = (void*)kalloc(PAGESIZE);
     vmiter(ptable[pid].pagetable, stack_addr).map(new_page, PTE_PWU);
@@ -358,6 +358,8 @@ uintptr_t syscall(regstate* regs) {
 
 int syscall_page_alloc(uintptr_t addr) {
     void* new_page = (void*)kalloc(PAGESIZE);
+    if(new_page == nullptr)
+        return -1;
     vmiter(current->pagetable, addr).map(new_page, PTE_PWU);
     memset((void*) new_page, 0, PAGESIZE);
     return 0;
